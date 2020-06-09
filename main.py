@@ -4,7 +4,7 @@ import numpy as np
 from os import path
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint
-from .train_utils import CNN3D, dataset
+from train_utils import CNN3D, dataset
 
 parser = argparse.ArgumentParser(description='CNN TEP')
 parser.add_argument('-e', '--epochs', default=200, type=int, metavar='N',
