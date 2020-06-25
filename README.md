@@ -1,1 +1,1 @@
-# Liquid crystal sensor for ozone chlorine mixture code
+# Liquid crystal sensor for O3/Cl2
