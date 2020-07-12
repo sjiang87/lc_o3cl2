@@ -1,20 +1,24 @@
 import glob
 import h5py
-import keras
+from tensorflow import keras
 import numpy as np
 from os import path
-from keras.models import Model
-from keras.layers import Conv3D, MaxPool3D, Flatten, Dense
+from tensorflow.random import set_random_seed
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Conv3D, MaxPool3D, Flatten, Dense
 from sklearn.model_selection import train_test_split, KFold
-from keras.layers import Dropout, BatchNormalization, Input
+from tensorflow.keras.layers import Dropout, BatchNormalization, Input, ReLU
+
+np.random.seed(2020)
+set_random_seed(2020)
 
 
 class DataGenerator(keras.utils.Sequence):
     """
         Data generator for the 3d CNN of Chlorine and Ozone dataset
     """
-    def __init__(self, list_IDs, labels, batch_size=2, dim=(150, 50, 50), n_channels=3,
-                 n_classes=4, shuffle=False, o3=1, classification=1):
+    def __init__(self, list_IDs, labels, batch_size=2, dim=(240, 48, 48), n_channels=3,
+                 n_classes=4, shuffle=False, o3=1, classification=1, rgb=0):
         """
         Initialization
         Args:
@@ -37,6 +41,7 @@ class DataGenerator(keras.utils.Sequence):
         self.shuffle = shuffle
         self.o3 = o3
         self.classification = classification
+        self.rgb = rgb
         self.indexes = np.arange(len(self.list_IDs))
         self.on_epoch_end()
 
@@ -46,7 +51,7 @@ class DataGenerator(keras.utils.Sequence):
         Returns:
             the number of batches per epoch
         """
-        return int(np.floor(len(self.list_IDs) / self.batch_size) + 1)
+        return int(np.floor(len(self.list_IDs) / self.batch_size))
 
     def __getitem__(self, index):
         """
@@ -101,12 +106,11 @@ class DataGenerator(keras.utils.Sequence):
             X_temp = np.array(X_temp)
             y_temp = np.array(y_temp)
 
-            # if the video length is not 144 frames, cut the first 144 frames
-            if len(X_temp) != 144:
-                X_temp = X_temp[3:-3, 1:-1, 1:-1, ...]
             # if the video has only one color channel, and is squeezed, add back the dimension at the end
-            if X_temp.shape[-1] != 1 and X_temp.shape[-1] != 3:
-                X_temp = X_temp[..., np.newaxis]
+            if self.rgb == 2:
+                X_temp = X_temp.mean(axis=-1)[..., np.newaxis]
+            elif self.rgb == 3:
+                X_temp = X_temp[..., 1][..., np.newaxis]
             h5f.close()
             # Store sample
             X[i, ] = X_temp
@@ -151,7 +155,7 @@ class DataGenerator(keras.utils.Sequence):
         return X, y2
 
 
-def CNN3D(filter=8, dense=32, classification=1, rgb=1):
+def CNN3D(filter=8, dense=32, classification=1, rgb=0):
     """
     The 3DCNN model used to predict ozone chlorine mixed concentrations.
     Args:
@@ -163,29 +167,36 @@ def CNN3D(filter=8, dense=32, classification=1, rgb=1):
     Returns:
         model: keras model
     """
-    if rgb == 1:
-        input = Input(shape=(144, 48, 48, 3))
+    if rgb == 0 or rgb == 1:
+        input = Input(shape=(240, 48, 48, 3))
     else:
-        input = Input(shape=(144, 48, 48, 1))
-    conv1 = Conv3D(filters=filter, kernel_size=(3, 3, 3), activation='relu')(input)
-    conv2 = Conv3D(filters=filter, kernel_size=(3, 3, 3), activation='relu')(conv1)
-    pool1 = MaxPool3D(pool_size=(3, 2, 2))(conv2)
-    conv3 = Conv3D(filters=filter, kernel_size=(3, 3, 3), activation='relu')(pool1)
-    conv4 = Conv3D(filters=filter, kernel_size=(3, 3, 3), activation='relu')(conv3)
-    pool2 = MaxPool3D(pool_size=(3, 2, 2))(conv4)
-    conv5 = Conv3D(filters=filter, kernel_size=(3, 3, 3), activation='relu')(pool2)
-    conv6 = Conv3D(filters=filter, kernel_size=(3, 3, 3), activation='relu')(conv5)
+        input = Input(shape=(240, 48, 48, 1))
+    conv1 = Conv3D(filters=filter, kernel_size=(3, 3, 3))(input)
+    act1 = ReLU()(conv1)
+    bn1 = BatchNormalization()(act1)
+    conv2 = Conv3D(filters=filter, kernel_size=(3, 3, 3))(bn1)
+    act2 = ReLU()(conv2)
+    bn2 = BatchNormalization()(act2)
+    pool1 = MaxPool3D(pool_size=(3, 2, 2))(bn2)
+    conv3 = Conv3D(filters=filter, kernel_size=(3, 3, 3))(pool1)
+    act3 = ReLU()(conv3)
+    bn3 = BatchNormalization()(act3)
+    conv4 = Conv3D(filters=filter, kernel_size=(3, 3, 3))(bn3)
+    act4 = ReLU()(conv4)
+    bn4 = BatchNormalization()(act4)
+    pool2 = MaxPool3D(pool_size=(3, 2, 2))(bn4)
+    conv5 = Conv3D(filters=filter, kernel_size=(3, 3, 3))(pool2)
+    act5 = ReLU()(conv5)
+    bn5 = BatchNormalization()(act5)
+    conv6 = Conv3D(filters=filter, kernel_size=(3, 3, 3))(bn5)
     pool3 = MaxPool3D(pool_size=(3, 2, 2))(conv6)
-    bn = BatchNormalization()(pool3)
-    flatten = Flatten()(bn)
-    dense1 = Dense(units=dense, activation='relu')(flatten)
-    do1 = Dropout(0.2)(dense1)
-    dense2 = Dense(units=dense, activation='relu')(do1)
-    do2 = Dropout(0.2)(dense2)
+    flatten = Flatten()(pool3)
+    dense1 = Dense(units=dense)(flatten)
+    dense2 = Dense(units=dense)(dense1)
     if classification == 1:
-        prediction = Dense(units=4, activation='softmax')(do2)
+        prediction = Dense(units=4, activation='softmax')(dense2)
     else:
-        prediction = Dense(units=1, activation='linear')(do2)
+        prediction = Dense(units=1, activation='linear')(dense2)
     model = Model(inputs=input, outputs=prediction)
     print(model.summary())
     return model
@@ -205,26 +216,26 @@ def dataset(params, args, cv=1):
         validation generator
         training indices
     """
-    if path.exists(r'F:\\O3Cl2_3DCNN') and args.rgb == 1:
+    if path.exists(r'F:\\O3Cl2_3DCNN') and args.rgb == 0 or args.rgb == 2:
         if args.ozone == 1:
-            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_3DCNN\\O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
+            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_RGB\\O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
         else:
-            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_3DCNN\\O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
-    elif path.exists(r'F:\\O3Cl2_ASTAR') and args.rgb == 0:
+            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_RGB\\O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
+    elif path.exists(r'F:\\O3Cl2_ASTAR') and args.rgb == 1 or args.rgb == 3:
         if args.ozone == 1:
-            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_ASTAR\\O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
+            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_LAB\\O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
         else:
-            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_ASTAR\\O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
-    elif path.exists(r'./O3Cl2') and args.rgb == 1:
+            train_idx_total = sorted(glob.glob(r'F:\\O3Cl2_LAB\\O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
+    elif path.exists(r'./O3Cl2_RGB') and args.rgb == 0 or args.rgb == 2:
         if args.ozone == 1:
-            train_idx_total = sorted(glob.glob(r'./O3Cl2/O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
+            train_idx_total = sorted(glob.glob(r'./O3Cl2_RGB/O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
         else:
-            train_idx_total = sorted(glob.glob(r'./O3Cl2/O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
-    elif path.exists(r'./O3Cl2_ASTAR') and args.rgb == 0:
+            train_idx_total = sorted(glob.glob(r'./O3Cl2_RGB/O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
+    elif path.exists(r'./O3Cl2_LAB') and args.rgb == 1 or args.rgb == 3:
         if args.ozone == 1:
-            train_idx_total = sorted(glob.glob(r'./O3Cl2_ASTAR/O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
+            train_idx_total = sorted(glob.glob(r'./O3Cl2_LAB/O3Cl2_*_*_{}_*_0.h5'.format(args.conc)))
         else:
-            train_idx_total = sorted(glob.glob(r'./O3Cl2_ASTAR/O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
+            train_idx_total = sorted(glob.glob(r'./O3Cl2_LAB/O3Cl2_*_{}_*_*_0.h5'.format(args.conc)))
     np.random.seed(2020)
     train_idx_total = np.random.permutation(train_idx_total)
 

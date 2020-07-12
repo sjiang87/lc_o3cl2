@@ -2,8 +2,8 @@ import pickle
 import argparse
 import numpy as np
 from os import path
-from keras.optimizers import Adam
-from keras.callbacks import ModelCheckpoint
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from train_utils import CNN3D, dataset
 
 parser = argparse.ArgumentParser(description='CNN TEP')
@@ -27,50 +27,58 @@ parser.add_argument('-x', '--classification', default=0, type=int,
 parser.add_argument('-a', '--accuracy', default=0, type=int,
                     help='1 uses accuracy as metrics (0 is val loss)')
 parser.add_argument('-r', '--rgb', default=0, type=int,
-                    help='1 means the dataset is rgb (0 is a star)')
+                    help='0 is rgb, 1 is lab, 2 is gray, 3 is a star')
 parser.add_argument('--train', action='store_true',
                     help='if train')
 
 
-
 def main(args):
     # Parameters
-    params = {'dim': (144, 48, 48),
+    if int(args.rgb) == 0 or int(args.rgb) == 1:
+        n_channels = 3
+    else:
+        n_channels = 1
+    params = {'dim': (240, 48, 48),
               'batch_size': args.batchsize,
               'n_classes': 4,
-              'n_channels': int(args.rgb) * 2 + 1,
+              'n_channels': n_channels,
               'shuffle': False,
               'o3': args.ozone,
-              'classification': args.classification}
+              'classification': args.classification,
+              'rgb': args.rgb}
 
     # import 3d cnn model
-    model = CNN3D(filter=args.filter, dense=args.dense, classification=args.classification, rgb=args.rgb)
-
     # five fold cross validation
     for cv in range(5):
+        model = CNN3D(filter=args.filter, dense=args.dense, classification=args.classification, rgb=args.rgb)
         training_generator, validation_generator, test_generator, train_idx = dataset(params, args, cv=cv + 1)
         file_name = r"e{}b{}l{}f{}d{}c{}t{}o{}x{}a{}r{}v{}".format(args.epochs, args.batchsize, args.lr, args.filter,
                                                                    args.dense,
                                                                    args.conc, 1, args.ozone,
                                                                    args.classification,
                                                                    args.accuracy, args.rgb, cv)
-
+        print(file_name)
         if args.classification == 1:
             model.compile(loss='categorical_crossentropy', optimizer=Adam(lr=args.lr), metrics=['acc'])
             if args.accuracy == 1:
                 checkpoint = ModelCheckpoint('{}.h5'.format(file_name), monitor='val_acc', verbose=2,
                                              save_best_only=True, mode='max')
+                els = EarlyStopping(monitor='val_acc', mode='max', patience=50)
             else:
                 checkpoint = ModelCheckpoint('{}.h5'.format(file_name), monitor='val_loss', verbose=2,
                                              save_best_only=True, mode='min')
+                els = EarlyStopping(monitor='val_loss', mode='min', patience=50)
         else:
             model.compile(loss='mean_squared_error', optimizer=Adam(lr=args.lr), metrics=['mean_absolute_error'])
             if args.accuracy == 1:
                 checkpoint = ModelCheckpoint('{}.h5'.format(file_name), monitor='val_mean_absolute_error', verbose=2,
                                              save_best_only=True, mode='min')
+                els = EarlyStopping(monitor='val_mean_absolute_error', mode='min', patience=50)
             else:
                 checkpoint = ModelCheckpoint('{}.h5'.format(file_name), monitor='val_loss', verbose=2,
                                              save_best_only=True, mode='min')
+                els = EarlyStopping(monitor='val_loss', mode='min', patience=50)
+
 
         if args.train == 1:
             history = model.fit_generator(generator=training_generator,
@@ -78,8 +86,8 @@ def main(args):
                                           use_multiprocessing=False,
                                           workers=6,
                                           epochs=args.epochs,
-                                          callbacks=[checkpoint],
-                                          verbose=2)
+                                          callbacks=[checkpoint, els],
+                                          verbose=1)
 
         if path.exists(r'D:\\data\\lc_data\\data'):
             model.load_weights(r'D:\\data\\lc_data\\data\\{}.h5'.format(file_name))
@@ -97,7 +105,7 @@ def main(args):
             with open('{}.pickle'.format(file_name), 'wb') as handle:
                 pickle.dump(y_test, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 pickle.dump(y_pred, handle, protocol=pickle.HIGHEST_PROTOCOL)
-                pickle.dump(history, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(history.history, handle, protocol=pickle.HIGHEST_PROTOCOL)
     return
 
 
